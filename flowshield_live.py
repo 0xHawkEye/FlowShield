@@ -95,12 +95,17 @@ def analyze_flow(flow_key, stats):
             is_threat = True
             reason = "AI Pattern Match"
 
-        if pps > 20 and avg_size < 200:
+        if pps > 1500:
             is_threat = True
-            reason = f"Flood Detected ({int(pps)} pps)"
+            reason = f"Volumetric Flood Detected ({int(pps)} pps)"
             conf = 1.0
 
-        if stats['syn_count'] > 5 and stats['syn_count'] > (stats['ack_count'] * 3):
+        elif pps > 2000 and avg_size < 120:
+            is_threat = True
+            reason = f"TCP SYN Flood Detected ({int(pps)} pps)"
+            conf = 1.0
+
+        elif stats['syn_count'] > 5 and stats['syn_count'] > (stats['ack_count'] * 3):
             is_threat = True
             reason = "Port Scan (SYN)"
             conf = 1.0
@@ -111,8 +116,6 @@ def analyze_flow(flow_key, stats):
                 print_alert(src_ip, dst_ip, conf, stats, pps, reason, True)
             elif pps > 0:
                 log_to_db(src_ip, dst_ip, "Normal Traffic", pps)
-
-                # print_alert(src_ip, dst_ip, conf, stats, pps, "Normal Traffic", False)
 
     except Exception as e:
         pass

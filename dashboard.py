@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import sqlite3
@@ -7,132 +9,88 @@ from datetime import datetime
 # Config
 DB_FILE = "flowshield_logs.db"
 REFRESH_RATE = 1000
-ATTACK_THRESHOLD = 50
 
 plt.style.use('dark_background')
 plt.rcParams['font.family'] = 'monospace'
 
 fig = plt.figure(figsize=(12, 8))
-fig.canvas.manager.set_window_title('FlowShield Enterprise Monitor - CSOC')
+fig.canvas.manager.set_window_title('FlowShield CSOC Monitor')
 fig.patch.set_facecolor('#0a0a0a')
 
-# grid layout
-ax1 = plt.subplot2grid((4, 1), (0, 0), rowspan=3)  # Graph
-ax2 = plt.subplot2grid((4, 1), (3, 0), rowspan=1)  # Table
+ax1 = plt.subplot2grid((4, 1), (0, 0), rowspan=3)
+ax2 = plt.subplot2grid((4, 1), (3, 0), rowspan=1)
 
 
 def fetch_data():
     try:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
-        current_time = time.time()
-        c.execute("SELECT timestamp, speed, type FROM alerts WHERE timestamp > ?", (current_time - 60,))
-        graph_data = c.fetchall()
-
+        curr = time.time()
+        c.execute("SELECT timestamp, speed, type FROM alerts WHERE timestamp > ?", (curr - 60,))
+        g_data = c.fetchall()
         c.execute("SELECT timestamp, type, src, speed FROM alerts ORDER BY id DESC LIMIT 5")
-        table_data = c.fetchall()
+        t_data = c.fetchall()
         conn.close()
-        return graph_data, table_data
+        return g_data, t_data
     except:
         return [], []
 
 
 def animate(i):
-    graph_data, table_data = fetch_data()
-
+    g_data, t_data = fetch_data()
     ax1.clear()
     ax1.set_facecolor('#0a0a0a')
-    current_time = time.time()
+    curr = time.time()
 
-    is_under_attack = False
+    is_critical, is_suspicious = False, False
+    if g_data:
+        x = [r[0] - curr for r in g_data]
+        y = [r[1] for r in g_data]
+        types = [r[2] for r in g_data]
 
-    if graph_data:
-        x_vals = [row[0] - current_time for row in graph_data]
-        y_vals = [row[1] for row in graph_data]
-        types = [row[2] for row in graph_data]
-
-        if max(y_vals) > ATTACK_THRESHOLD:
-            is_under_attack = True
-
-        line_color = '#ff3333' if is_under_attack else '#00ff00'
-        fill_alpha = 0.3 if is_under_attack else 0.1
-
-        ax1.plot(x_vals, y_vals, color=line_color, linewidth=2, label='Traffic Intensity')
-        ax1.fill_between(x_vals, y_vals, color=line_color, alpha=fill_alpha)
-
-        colors = []
         for t in types:
-            t_upper = t.upper()
-            if "FLOOD" in t_upper:
-                colors.append('#ff3333')  # Red for Floods
-            elif "SCAN" in t_upper:
-                colors.append('#ffaa00')  # Orange for Scans
-            elif "PATTERN MATCH" in t_upper or "AI" in t_upper:
-                colors.append('#00ffff')  # Cyan for AI Slowloris
-            else:
-                colors.append('#00ff00')  # Green for Ignored/Normal Traffic
+            if "FLOOD" in t.upper() or "SCAN" in t.upper():
+                is_critical = True
+            elif "AI" in t.upper() or "PATTERN" in t.upper():
+                is_suspicious = True
 
-        ax1.scatter(x_vals, y_vals, c=colors, s=120, edgecolors='white', zorder=10)
+        color = '#ff3333' if is_critical else ('#00ffff' if is_suspicious else '#00ff00')
+        ax1.plot(x, y, color=color, linewidth=2)
+        ax1.fill_between(x, y, color=color, alpha=0.2)
 
-    if is_under_attack:
-        ax1.text(0.02, 0.90, "⚠️ SYSTEM UNDER ATTACK", transform=ax1.transAxes, color='#ff3333', fontsize=18,
-                 fontweight='bold')
-    else:
-        ax1.text(0.02, 0.90, "✅ SYSTEM NORMAL", transform=ax1.transAxes, color='#00ff00', fontsize=14,
-                 fontweight='bold')
+        dot_colors = ['#ff3333' if "FLOOD" in t.upper() else ('#00ffff' if "AI" in t.upper() else '#00ff00') for t in
+                      types]
+        ax1.scatter(x, y, c=dot_colors, s=80, edgecolors='white', zorder=10)
 
-    ax1.set_title("🛡️ FLOWSHIELD LIVE THREAT TELEMETRY", fontsize=16, color='white', fontweight='bold', pad=15)
-    ax1.set_ylabel("PACKETS / SEC", color='#888888', fontweight='bold')
+    status = "[!!!] CRITICAL" if is_critical else ("[?] SUSPICIOUS" if is_suspicious else "[+] SECURE")
+    status_color = '#ff3333' if is_critical else ('#00ffff' if is_suspicious else '#00ff00')
+    ax1.text(0.02, 0.92, status, transform=ax1.transAxes, color=status_color, fontsize=16, fontweight='bold')
+
+    ax1.set_title("FLOWSHIELD THREAT TELEMETRY", fontsize=14, color='white', pad=15)
     ax1.set_xlim(-60, 2)
-    max_y = max([y for y in [row[1] for row in graph_data]] + [50]) * 1.2 if graph_data else 50
-    ax1.set_ylim(0, max_y)
+    ax1.set_ylim(0, max([r[1] for r in g_data] + [100]) * 1.2 if g_data else 100)
     ax1.grid(True, color='#222222', linestyle=':')
-    ax1.spines['top'].set_visible(False)
-    ax1.spines['right'].set_visible(False)
-    ax1.spines['bottom'].set_color('#444444')
-    ax1.spines['left'].set_color('#444444')
 
     ax2.clear()
     ax2.axis('off')
-
-    if table_data:
-        cell_text = []
-        for row in table_data:
-            t_str = datetime.fromtimestamp(row[0]).strftime('%H:%M:%S')
-            alert_type = row[1]
-            src_ip = row[2]
-            speed = f"{int(row[3])} pps"
-            cell_text.append([t_str, alert_type, src_ip, speed])
-
-        the_table = ax2.table(cellText=cell_text,
-                              colLabels=["TIMESTAMP", "THREAT CLASSIFICATION", "SOURCE IP", "INTENSITY"], loc='center',
-                              cellLoc='left')
-        the_table.auto_set_font_size(False)
-        the_table.set_fontsize(11)
-        the_table.scale(1, 1.8)
-
-        for (row, col), cell in the_table.get_celld().items():
+    if t_data:
+        cell_text = [[datetime.fromtimestamp(r[0]).strftime('%H:%M:%S'), r[1], r[2], f"{int(r[3])} pps"] for r in
+                     t_data]
+        tab = ax2.table(cellText=cell_text, colLabels=["TIME", "THREAT", "SOURCE IP", "SPEED"], loc='center',
+                        cellLoc='left')
+        tab.auto_set_font_size(False);
+        tab.set_fontsize(10);
+        tab.scale(1, 1.5)
+        for (r, c), cell in tab.get_celld().items():
             cell.set_edgecolor('#222222')
-
-            if row == 0:
-                cell.set_text_props(weight='bold', color='#00ffff')
-                cell.set_facecolor('#111111')
-            else:
-                t_upper = cell_text[row - 1][1].upper()
-                if "FLOOD" in t_upper:
-                    text_color = '#ff3333'
-                elif "SCAN" in t_upper:
-                    text_color = '#ffaa00'
-                elif "PATTERN MATCH" in t_upper or "AI" in t_upper:
-                    text_color = '#00ffff'
-                else:
-                    text_color = '#00ff00'
-
-                cell.set_text_props(color=text_color)
-                cell.set_facecolor('#0a0a0a')
+            cell.set_facecolor('#0a0a0a' if r > 0 else '#1a1a1a')
+            if r > 0:
+                cell_type = cell_text[r - 1][1].upper()
+                cell.set_text_props(
+                    color=('#ff3333' if "FLOOD" in cell_type else ('#00ffff' if "AI" in cell_type else '#00ff00')))
 
 
-print("[*] 📡 INITIALIZING CSOC DASHBOARD...")
+print("[*] 📡 Launching CSOC Interface...")
 ani = animation.FuncAnimation(fig, animate, interval=REFRESH_RATE, cache_frame_data=False)
 plt.tight_layout()
 plt.show()
